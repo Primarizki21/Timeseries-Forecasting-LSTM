@@ -11,6 +11,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 from prepare import prepare_ticker, TICKERS, LOOK_BACK
 
+# -------------------------------------------------------
+# EXPERIMENT: 2-layer LSTM, look_back=20, lr=0.001
+# Hipotesis: 2-layer LSTM dengan look_back yang benar (20)
+# seharusnya menangkap pola lebih baik dari baseline 1-layer.
+# Sebelumnya 2-layer diuji dengan look_back=5 (terlalu pendek).
+# Kali ini pakai look_back=20 + dropout lebih ringan (0.2).
+# -------------------------------------------------------
+
+EXPERIMENT_LOOK_BACK = 20
+EXPERIMENT_SLUG = "lstm2l_lb20"
+
 def get_commit_hash():
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode("utf-8").strip()
@@ -18,8 +29,16 @@ def get_commit_hash():
         return "unknown_commit"
 
 def build_model(input_shape):
+    """
+    2-layer LSTM:
+    LSTM(128, return_sequences=True) → Dropout(0.2)
+    → LSTM(64) → Dropout(0.2)
+    → Dense(1)
+    """
     model = models.Sequential([
-        layers.LSTM(64, input_shape=input_shape),
+        layers.LSTM(128, return_sequences=True, input_shape=input_shape),
+        layers.Dropout(0.2),
+        layers.LSTM(64),
         layers.Dropout(0.2),
         layers.Dense(1)
     ])
@@ -31,7 +50,7 @@ def build_model(input_shape):
     return model
 
 def train_one_ticker(ticker, commit_hash):
-    X_train, X_val, X_test, y_train, y_val, y_test, scaler = prepare_ticker(ticker, look_back=LOOK_BACK)
+    X_train, X_val, X_test, y_train, y_val, y_test, scaler = prepare_ticker(ticker, look_back=EXPERIMENT_LOOK_BACK)
 
     model = build_model((X_train.shape[1], X_train.shape[2]))
 
@@ -42,7 +61,7 @@ def train_one_ticker(ticker, commit_hash):
     history = model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
-        epochs=50,
+        epochs=100,
         batch_size=32,
         callbacks=[es],
         verbose=0
@@ -50,8 +69,9 @@ def train_one_ticker(ticker, commit_hash):
 
     y_pred = model.predict(X_test).flatten()
 
-    # Inverse transform
-    dummy = np.zeros((len(y_test), 5))
+    # Inverse transform — 5 features in scaler
+    n_features = scaler.n_features_in_
+    dummy = np.zeros((len(y_test), n_features))
     dummy[:, 0] = y_test
     y_test_inv = scaler.inverse_transform(dummy)[:, 0]
 
@@ -68,7 +88,7 @@ def train_one_ticker(ticker, commit_hash):
     plt.figure(figsize=(10, 5))
     plt.plot(history.history['loss'], label='Train Loss')
     plt.plot(history.history['val_loss'], label='Val Loss')
-    plt.title(f"{ticker} Training History")
+    plt.title(f"{ticker} Training History — 2-layer LSTM")
     plt.legend()
     plt.savefig(f"{out_dir}/training_history_{ticker}.png")
     plt.close()
@@ -77,14 +97,14 @@ def train_one_ticker(ticker, commit_hash):
     plt.figure(figsize=(14, 5))
     plt.plot(y_test_inv, label="Actual (Groundtruth)", color="steelblue")
     plt.plot(y_pred_inv, label="Predicted", color="tomato", linestyle="--")
-    plt.title(f"LSTM Forecast — {ticker} | RMSE={rmse:.4f}")
+    plt.title(f"2-Layer LSTM Forecast — {ticker} | RMSE={rmse:.4f}")
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"{out_dir}/prediction_{ticker}.png")
     plt.close()
 
-    # Save model temporarily (can be moved/kept later)
-    model.save(f"{out_dir}/model_{ticker}_lstm_baseline.keras")
+    # Save model
+    model.save(f"{out_dir}/model_{ticker}_{EXPERIMENT_SLUG}.keras")
 
     return rmse, mae, len(history.history['loss'])
 
@@ -110,10 +130,11 @@ if __name__ == "__main__":
         print(f"mae:             {mae:.6f}")
 
     rmse_avg = np.mean(rmses)
+    elapsed = time.time() - t0
     print("---")
     print(f"rmse_avg:        {rmse_avg:.6f}")
-    print(f"training_seconds:{time.time() - t0:.1f}")
-    print(f"model:           LSTM baseline look_back={LOOK_BACK}")
+    print(f"training_seconds:{elapsed:.1f}")
+    print(f"model:           2-layer LSTM look_back={EXPERIMENT_LOOK_BACK} slug={EXPERIMENT_SLUG}")
 
     # Save regression report
     report_data = []
@@ -124,7 +145,7 @@ if __name__ == "__main__":
     try:
         df_report.to_excel(f"{out_dir}/regression_report.xlsx", index=False)
     except Exception as e:
-        print("Note: openpyxl might be missing, could not save .xlsx")
+        print("Note: openpyxl not available, skipping .xlsx")
 
     # Generate experiment card
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -133,14 +154,14 @@ commit:         {commit_hash}
 date:           {date_str}
 
 --- Model ---
-type:           LSTM (1 layer baseline)
-architecture:   LSTM(64) → Dropout(0.2) → Dense(1)
+type:           LSTM (2 layer)
+architecture:   LSTM(128, ret_seq=True) → Dropout(0.2) → LSTM(64) → Dropout(0.2) → Dense(1)
 optimizer:      Adam lr=0.001
-epochs_run:     {np.mean(epochs_list):.1f} (avg)
+epochs_run:     {np.mean(epochs_list):.1f} avg (max=100, patience=10)
 
 --- Preprocessing ---
 scaler:         MinMaxScaler (fit on train only)
-look_back:      {LOOK_BACK}
+look_back:      {EXPERIMENT_LOOK_BACK}
 use_log_return: False
 features:       close, RSI_14, MA_20, log_return, lag_1
 
@@ -155,17 +176,19 @@ BBCA: rmse={results['BBCA.JK'][0]:.2f}, mae={results['BBCA.JK'][1]:.2f}
 BBRI: rmse={results['BBRI.JK'][0]:.2f}, mae={results['BBRI.JK'][1]:.2f}
 BMRI: rmse={results['BMRI.JK'][0]:.2f}, mae={results['BMRI.JK'][1]:.2f}
 rmse_avg: {rmse_avg:.2f}
-status:   keep  |  discard  |  crash
+status:   (to be determined)
 model_files:
-  BBCA.JK: model_BBCA.JK_lstm_baseline.keras
-  BBRI.JK: model_BBRI.JK_lstm_baseline.keras
-  BMRI.JK: model_BMRI.JK_lstm_baseline.keras
+  BBCA.JK: model_BBCA.JK_{EXPERIMENT_SLUG}.keras
+  BBRI.JK: model_BBRI.JK_{EXPERIMENT_SLUG}.keras
+  BMRI.JK: model_BMRI.JK_{EXPERIMENT_SLUG}.keras
 
 --- Why tried ---
-Hipotesis: Baseline LSTM(64)+Dropout(0.2), look_back={LOOK_BACK}, baseline features
+Hipotesis: 2-layer LSTM dengan look_back=20 (bukan look_back=5 seperti percobaan sebelumnya).
+Dropout lebih ringan (0.2 di kedua layer). Sebelumnya, 2-layer dengan look_back=5 gagal
+karena window terlalu pendek. Kali ini kita berikan konteks yang lebih panjang.
 
 --- What worked / didn't ---
-(to be filled by agent)
+(to be filled after run)
 """
     with open(f"{out_dir}/experiment_card.txt", "w") as f:
         f.write(card_content)
