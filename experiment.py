@@ -12,16 +12,14 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from prepare import prepare_ticker, TICKERS, LOOK_BACK
 
 # -------------------------------------------------------
-# EXPERIMENT: GRU 2-layer look_back=30, tambah lag_2
-# Hipotesis: GRU 2-layer adalah best so far (avg=143.88).
-# BBRI sangat baik (56.72) tapi BBCA (170.84) dan BMRI (204.09) masih tinggi.
-# look_back=30 memberikan konteks lebih panjang (30 hari trading ~ 1.5 bulan).
-# Tambah lag_2 sebagai fitur tambahan untuk membantu BBCA.
+# EXPERIMENT: GRU 2-layer look_back=30 + lag_2, units lebih besar (256, 128)
+# Hipotesis: GRU lb=30 + lag_2 adalah best so far (avg=114.01).
+# BBCA masih tinggi (171). Coba GRU dengan unit lebih besar (256, 128)
+# untuk kapasitas lebih tinggi dalam menangkap pola BBCA.
 # -------------------------------------------------------
 
 EXPERIMENT_LOOK_BACK = 30
-EXPERIMENT_SLUG = "gru2l_lb30_lag2"
-# Features diperluas: tambah lag_2
+EXPERIMENT_SLUG = "gru2l_lb30_256_128"
 FEATURES = ["close", "RSI_14", "MA_20", "log_return", "lag_1", "lag_2"]
 
 def get_commit_hash():
@@ -32,14 +30,14 @@ def get_commit_hash():
 
 def build_model(input_shape):
     """
-    2-layer GRU dengan input shape yang mengakomodasi 6 features.
-    GRU(128, ret_seq=True) -> Dropout(0.2) -> GRU(64) -> Dropout(0.2) -> Dense(1)
+    2-layer GRU dengan units lebih besar:
+    GRU(256, return_sequences=True) -> Dropout(0.2) -> GRU(128) -> Dropout(0.2) -> Dense(1)
     """
     model = models.Sequential([
         layers.Input(shape=input_shape),
-        layers.GRU(128, return_sequences=True),
+        layers.GRU(256, return_sequences=True),
         layers.Dropout(0.2),
-        layers.GRU(64),
+        layers.GRU(128),
         layers.Dropout(0.2),
         layers.Dense(1)
     ])
@@ -51,7 +49,6 @@ def build_model(input_shape):
     return model
 
 def prepare_ticker_extended(ticker, look_back, features):
-    """Extended prepare with additional features (lag_2)."""
     import polars as pl
     import yfinance as yf
     from sklearn.preprocessing import MinMaxScaler
@@ -63,7 +60,6 @@ def prepare_ticker_extended(ticker, look_back, features):
     df.columns = [str(c).lower() for c in df.columns]
     df_pl = pl.from_pandas(df)
 
-    # Feature engineering
     df_pl = df_pl.with_columns([
         pl.col("close").shift(1).alias("lag_1"),
         pl.col("close").shift(2).alias("lag_2"),
@@ -130,7 +126,6 @@ def train_one_ticker(ticker, commit_hash):
 
     y_pred = model.predict(X_test).flatten()
 
-    # Inverse transform
     n_features = scaler.n_features_in_
     dummy = np.zeros((len(y_test), n_features))
     dummy[:, 0] = y_test
@@ -145,26 +140,23 @@ def train_one_ticker(ticker, commit_hash):
     out_dir = f"evaluation_output/{commit_hash}"
     os.makedirs(out_dir, exist_ok=True)
 
-    # Plot training history
     plt.figure(figsize=(10, 5))
     plt.plot(history.history['loss'], label='Train Loss')
     plt.plot(history.history['val_loss'], label='Val Loss')
-    plt.title(f"{ticker} Training History -- 2-layer GRU lb=30")
+    plt.title(f"{ticker} Training History -- GRU(256,128) lb=30")
     plt.legend()
     plt.savefig(f"{out_dir}/training_history_{ticker}.png")
     plt.close()
 
-    # Plot prediction
     plt.figure(figsize=(14, 5))
     plt.plot(y_test_inv, label="Actual (Groundtruth)", color="steelblue")
     plt.plot(y_pred_inv, label="Predicted", color="tomato", linestyle="--")
-    plt.title(f"2-Layer GRU lb=30 -- {ticker} | RMSE={rmse:.4f}")
+    plt.title(f"GRU(256,128) lb=30 -- {ticker} | RMSE={rmse:.4f}")
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"{out_dir}/prediction_{ticker}.png")
     plt.close()
 
-    # Save model
     model.save(f"{out_dir}/model_{ticker}_{EXPERIMENT_SLUG}.keras")
 
     return rmse, mae, len(history.history['loss'])
@@ -195,9 +187,8 @@ if __name__ == "__main__":
     print("---")
     print(f"rmse_avg:        {rmse_avg:.6f}")
     print(f"training_seconds:{elapsed:.1f}")
-    print(f"model:           2-layer GRU look_back={EXPERIMENT_LOOK_BACK} features={FEATURES} slug={EXPERIMENT_SLUG}")
+    print(f"model:           GRU(256,128) look_back={EXPERIMENT_LOOK_BACK} slug={EXPERIMENT_SLUG}")
 
-    # Save regression report
     report_data = []
     for ticker, (rmse, mae) in results.items():
         report_data.append({"Ticker": ticker, "RMSE": rmse, "MAE": mae})
@@ -205,18 +196,17 @@ if __name__ == "__main__":
     df_report.to_csv(f"{out_dir}/regression_report.csv", index=False)
     try:
         df_report.to_excel(f"{out_dir}/regression_report.xlsx", index=False)
-    except Exception as e:
+    except Exception:
         print("Note: openpyxl not available, skipping .xlsx")
 
-    # Generate experiment card
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     card_content = f"""=== EXPERIMENT CARD ===
 commit:         {commit_hash}
 date:           {date_str}
 
 --- Model ---
-type:           GRU (2 layer) look_back=30 + lag_2 feature
-architecture:   GRU(128, ret_seq=True) -> Dropout(0.2) -> GRU(64) -> Dropout(0.2) -> Dense(1)
+type:           GRU (2 layer, larger units 256/128)
+architecture:   GRU(256, ret_seq=True) -> Dropout(0.2) -> GRU(128) -> Dropout(0.2) -> Dense(1)
 optimizer:      Adam lr=0.001
 epochs_run:     {np.mean(epochs_list):.1f} avg (max=100, EarlyStopping patience=10)
 
@@ -226,26 +216,15 @@ look_back:      {EXPERIMENT_LOOK_BACK}
 use_log_return: False
 features:       close, RSI_14, MA_20, log_return, lag_1, lag_2
 
---- Feature Engineering ---
-- RSI_14: Relative Strength Index 14 hari
-- MA_20: Moving Average 20 hari
-- log_return: log(close_t / close_t-1)
-- lag_1, lag_2: close geser 1 dan 2 hari
-
 --- Results ---
 BBCA: rmse={results['BBCA.JK'][0]:.2f}, mae={results['BBCA.JK'][1]:.2f}
 BBRI: rmse={results['BBRI.JK'][0]:.2f}, mae={results['BBRI.JK'][1]:.2f}
 BMRI: rmse={results['BMRI.JK'][0]:.2f}, mae={results['BMRI.JK'][1]:.2f}
 rmse_avg: {rmse_avg:.2f}
 status:   (to be determined)
-model_files:
-  BBCA.JK: model_BBCA.JK_{EXPERIMENT_SLUG}.keras
-  BBRI.JK: model_BBRI.JK_{EXPERIMENT_SLUG}.keras
-  BMRI.JK: model_BMRI.JK_{EXPERIMENT_SLUG}.keras
 
 --- Why tried ---
-Hipotesis: GRU 2-layer adalah best so far (143.88). Coba look_back=30 (lebih panjang)
-+ lag_2 sebagai fitur tambahan untuk membantu BBCA yang masih tinggi.
+GRU lb=30 lag_2 best so far (114.01). Coba GRU units lebih besar (256, 128) untuk BBCA.
 
 --- What worked / didn't ---
 (to be filled after run)
