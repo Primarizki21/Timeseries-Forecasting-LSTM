@@ -20,3 +20,10 @@ wheels/
 *.png
 *.jpeg
 *.jpg
+
+.openclaude-profile.json
+*.txt
+
+results.tsv
+*.log
+experiment_memory.md
