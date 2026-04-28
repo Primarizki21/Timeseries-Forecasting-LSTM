@@ -370,11 +370,11 @@ LOOP FOREVER:
 1. Cek git state (branch/commit saat ini)
 2. Baca `experiment_memory.md` — pilih ide yang **belum dicoba**
 3. Modifikasi `experiment.py` dengan ide baru
-4. Jika perlu library baru: `pip install <package>` atau `uv add <package>`
+4. Jika perlu library baru: `uv add <package>`
 5. `git commit`
 6. Jalankan:
    ```
-   python experiment.py > run.log 2>&1
+   uv run experiment.py > run.log 2>&1
    ```
 7. Baca hasil: `grep "^rmse_avg:" run.log`
 8. Jika grep kosong → crash. Jalankan `tail -n 30 run.log` untuk stack trace.
@@ -395,7 +395,7 @@ bank-stock-forecast/
 ├── program.md              ← dokumen ini
 ├── prepare.py              ← fixed harness (jangan dimodifikasi)
 ├── experiment.py           ← file yang dimodifikasi agent
-├── data/
+├── data_saham/
 │   ├── BBCA.csv
 │   ├── BBRI.csv
 │   └── BMRI.csv

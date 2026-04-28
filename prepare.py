@@ -5,9 +5,19 @@ import pandas as pd
 import polars as pl
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
+import os
+from datetime import datetime, timedelta
 
 TICKERS = ["BBCA.JK", "BBRI.JK", "BMRI.JK"]
 LOOK_BACK = 20  # default baseline
+
+DATA_DIR = "data_saham"
+
+def is_stale(filepath):
+    if not os.path.exists(filepath):
+        return True
+    modified_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+    return (datetime.now() - modified_time) > timedelta(days=1)
 
 # --------------------------------------------------
 # Fetch data (2 tahun terakhir)
