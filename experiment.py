@@ -12,15 +12,16 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from prepare import prepare_ticker, TICKERS, LOOK_BACK
 
 # -------------------------------------------------------
-# EXPERIMENT: 2-layer LSTM, look_back=20, lr=0.001
-# Hipotesis: 2-layer LSTM dengan look_back yang benar (20)
-# seharusnya menangkap pola lebih baik dari baseline 1-layer.
-# Sebelumnya 2-layer diuji dengan look_back=5 (terlalu pendek).
-# Kali ini pakai look_back=20 + dropout lebih ringan (0.2).
+# EXPERIMENT: GRU (Gated Recurrent Unit) 2-layer, look_back=20
+# Hipotesis: GRU lebih ringan dari LSTM (lebih sedikit parameter —
+# tidak punya separate cell state). Pada dataset kecil (~500 samples
+# training), GRU sering generalize lebih baik dari LSTM.
+# 2-layer LSTM (avg=146.17) adalah best so far. Kita coba 2-layer GRU
+# dengan ukuran yang sama untuk direct comparison.
 # -------------------------------------------------------
 
 EXPERIMENT_LOOK_BACK = 20
-EXPERIMENT_SLUG = "lstm2l_lb20"
+EXPERIMENT_SLUG = "gru2l_lb20"
 
 def get_commit_hash():
     try:
@@ -30,15 +31,17 @@ def get_commit_hash():
 
 def build_model(input_shape):
     """
-    2-layer LSTM:
-    LSTM(128, return_sequences=True) → Dropout(0.2)
-    → LSTM(64) → Dropout(0.2)
-    → Dense(1)
+    2-layer GRU:
+    GRU(128, return_sequences=True) -> Dropout(0.2)
+    -> GRU(64) -> Dropout(0.2)
+    -> Dense(1)
+    GRU memiliki parameter ~33% lebih sedikit dari LSTM yang setara.
     """
     model = models.Sequential([
-        layers.LSTM(128, return_sequences=True, input_shape=input_shape),
+        layers.Input(shape=input_shape),
+        layers.GRU(128, return_sequences=True),
         layers.Dropout(0.2),
-        layers.LSTM(64),
+        layers.GRU(64),
         layers.Dropout(0.2),
         layers.Dense(1)
     ])
@@ -69,7 +72,7 @@ def train_one_ticker(ticker, commit_hash):
 
     y_pred = model.predict(X_test).flatten()
 
-    # Inverse transform — 5 features in scaler
+    # Inverse transform
     n_features = scaler.n_features_in_
     dummy = np.zeros((len(y_test), n_features))
     dummy[:, 0] = y_test
@@ -88,7 +91,7 @@ def train_one_ticker(ticker, commit_hash):
     plt.figure(figsize=(10, 5))
     plt.plot(history.history['loss'], label='Train Loss')
     plt.plot(history.history['val_loss'], label='Val Loss')
-    plt.title(f"{ticker} Training History — 2-layer LSTM")
+    plt.title(f"{ticker} Training History -- 2-layer GRU")
     plt.legend()
     plt.savefig(f"{out_dir}/training_history_{ticker}.png")
     plt.close()
@@ -97,7 +100,7 @@ def train_one_ticker(ticker, commit_hash):
     plt.figure(figsize=(14, 5))
     plt.plot(y_test_inv, label="Actual (Groundtruth)", color="steelblue")
     plt.plot(y_pred_inv, label="Predicted", color="tomato", linestyle="--")
-    plt.title(f"2-Layer LSTM Forecast — {ticker} | RMSE={rmse:.4f}")
+    plt.title(f"2-Layer GRU Forecast -- {ticker} | RMSE={rmse:.4f}")
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"{out_dir}/prediction_{ticker}.png")
@@ -134,7 +137,7 @@ if __name__ == "__main__":
     print("---")
     print(f"rmse_avg:        {rmse_avg:.6f}")
     print(f"training_seconds:{elapsed:.1f}")
-    print(f"model:           2-layer LSTM look_back={EXPERIMENT_LOOK_BACK} slug={EXPERIMENT_SLUG}")
+    print(f"model:           2-layer GRU look_back={EXPERIMENT_LOOK_BACK} slug={EXPERIMENT_SLUG}")
 
     # Save regression report
     report_data = []
@@ -154,10 +157,10 @@ commit:         {commit_hash}
 date:           {date_str}
 
 --- Model ---
-type:           LSTM (2 layer)
-architecture:   LSTM(128, ret_seq=True) → Dropout(0.2) → LSTM(64) → Dropout(0.2) → Dense(1)
+type:           GRU (2 layer)
+architecture:   GRU(128, ret_seq=True) -> Dropout(0.2) -> GRU(64) -> Dropout(0.2) -> Dense(1)
 optimizer:      Adam lr=0.001
-epochs_run:     {np.mean(epochs_list):.1f} avg (max=100, patience=10)
+epochs_run:     {np.mean(epochs_list):.1f} avg (max=100, EarlyStopping patience=10)
 
 --- Preprocessing ---
 scaler:         MinMaxScaler (fit on train only)
@@ -183,12 +186,12 @@ model_files:
   BMRI.JK: model_BMRI.JK_{EXPERIMENT_SLUG}.keras
 
 --- Why tried ---
-Hipotesis: 2-layer LSTM dengan look_back=20 (bukan look_back=5 seperti percobaan sebelumnya).
-Dropout lebih ringan (0.2 di kedua layer). Sebelumnya, 2-layer dengan look_back=5 gagal
-karena window terlalu pendek. Kali ini kita berikan konteks yang lebih panjang.
+Hipotesis: GRU lebih ringan dari LSTM (33% param lebih sedikit), generalize lebih baik
+pada dataset kecil. Semakin dalam LSTM semakin buruk, mungkin karena overfitting.
+GRU dengan arsitektur setara 2-layer LSTM untuk direct comparison.
 
 --- What worked / didn't ---
 (to be filled after run)
 """
-    with open(f"{out_dir}/experiment_card.txt", "w") as f:
+    with open(f"{out_dir}/experiment_card.txt", "w", encoding="utf-8") as f:
         f.write(card_content)
