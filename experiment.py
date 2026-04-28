@@ -12,14 +12,14 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from prepare import prepare_ticker, TICKERS, LOOK_BACK
 
 # -------------------------------------------------------
-# EXPERIMENT: GRU 2-layer look_back=30 + lag_2, units lebih besar (256, 128)
-# Hipotesis: GRU lb=30 + lag_2 adalah best so far (avg=114.01).
-# BBCA masih tinggi (171). Coba GRU dengan unit lebih besar (256, 128)
-# untuk kapasitas lebih tinggi dalam menangkap pola BBCA.
+# EXPERIMENT: GRU(256,128) look_back=30 lag_2, batch_size=16
+# Hipotesis: GRU(256,128) lb=30 lag_2 adalah best so far (avg=108.02).
+# Coba batch_size=16 (lebih kecil dari 32) untuk update gradien lebih sering
+# dan regularisasi implisit yang lebih baik. Sering membantu pada dataset kecil.
 # -------------------------------------------------------
 
 EXPERIMENT_LOOK_BACK = 30
-EXPERIMENT_SLUG = "gru2l_lb30_256_128"
+EXPERIMENT_SLUG = "gru256_lb30_bs16"
 FEATURES = ["close", "RSI_14", "MA_20", "log_return", "lag_1", "lag_2"]
 
 def get_commit_hash():
@@ -29,10 +29,6 @@ def get_commit_hash():
         return "unknown_commit"
 
 def build_model(input_shape):
-    """
-    2-layer GRU dengan units lebih besar:
-    GRU(256, return_sequences=True) -> Dropout(0.2) -> GRU(128) -> Dropout(0.2) -> Dense(1)
-    """
     model = models.Sequential([
         layers.Input(shape=input_shape),
         layers.GRU(256, return_sequences=True),
@@ -41,7 +37,6 @@ def build_model(input_shape):
         layers.Dropout(0.2),
         layers.Dense(1)
     ])
-
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
         loss="mse"
@@ -119,7 +114,7 @@ def train_one_ticker(ticker, commit_hash):
         X_train, y_train,
         validation_data=(X_val, y_val),
         epochs=100,
-        batch_size=32,
+        batch_size=16,   # <-- smaller batch
         callbacks=[es],
         verbose=0
     )
@@ -143,7 +138,7 @@ def train_one_ticker(ticker, commit_hash):
     plt.figure(figsize=(10, 5))
     plt.plot(history.history['loss'], label='Train Loss')
     plt.plot(history.history['val_loss'], label='Val Loss')
-    plt.title(f"{ticker} Training History -- GRU(256,128) lb=30")
+    plt.title(f"{ticker} Training -- GRU(256,128) lb=30 bs=16")
     plt.legend()
     plt.savefig(f"{out_dir}/training_history_{ticker}.png")
     plt.close()
@@ -151,7 +146,7 @@ def train_one_ticker(ticker, commit_hash):
     plt.figure(figsize=(14, 5))
     plt.plot(y_test_inv, label="Actual (Groundtruth)", color="steelblue")
     plt.plot(y_pred_inv, label="Predicted", color="tomato", linestyle="--")
-    plt.title(f"GRU(256,128) lb=30 -- {ticker} | RMSE={rmse:.4f}")
+    plt.title(f"GRU(256,128) lb=30 bs=16 -- {ticker} | RMSE={rmse:.4f}")
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"{out_dir}/prediction_{ticker}.png")
@@ -187,7 +182,7 @@ if __name__ == "__main__":
     print("---")
     print(f"rmse_avg:        {rmse_avg:.6f}")
     print(f"training_seconds:{elapsed:.1f}")
-    print(f"model:           GRU(256,128) look_back={EXPERIMENT_LOOK_BACK} slug={EXPERIMENT_SLUG}")
+    print(f"model:           GRU(256,128) lb={EXPERIMENT_LOOK_BACK} bs=16 slug={EXPERIMENT_SLUG}")
 
     report_data = []
     for ticker, (rmse, mae) in results.items():
@@ -205,9 +200,10 @@ commit:         {commit_hash}
 date:           {date_str}
 
 --- Model ---
-type:           GRU (2 layer, larger units 256/128)
+type:           GRU (2 layer, 256/128) batch_size=16
 architecture:   GRU(256, ret_seq=True) -> Dropout(0.2) -> GRU(128) -> Dropout(0.2) -> Dense(1)
 optimizer:      Adam lr=0.001
+batch_size:     16
 epochs_run:     {np.mean(epochs_list):.1f} avg (max=100, EarlyStopping patience=10)
 
 --- Preprocessing ---
@@ -224,7 +220,8 @@ rmse_avg: {rmse_avg:.2f}
 status:   (to be determined)
 
 --- Why tried ---
-GRU lb=30 lag_2 best so far (114.01). Coba GRU units lebih besar (256, 128) untuk BBCA.
+GRU(256,128) lb=30 lag_2 best so far (108.02). Coba batch_size=16 untuk
+update gradien lebih sering. Biasanya membantu pada dataset kecil.
 
 --- What worked / didn't ---
 (to be filled after run)
