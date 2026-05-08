@@ -27,3 +27,7 @@ wheels/
 results.tsv
 *.log
 experiment_memory.md
+
+evaluation_output/*
+
+*.pdf
