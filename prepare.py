@@ -24,8 +24,11 @@ def is_stale(filepath):
 # --------------------------------------------------
 def fetch_data(ticker):
     df = yf.download(ticker, period="2y", interval="1d")
+    # Handle MultiIndex columns if they exist
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
-    df.columns = [c.lower() for c in df.columns]
+    df.columns = [str(c).lower() for c in df.columns]
     return pl.from_pandas(df)
 
 # --------------------------------------------------
